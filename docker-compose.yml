@@ -1,0 +1,57 @@
+version: "1.0"
+
+volumes:
+  rocketchat_data:
+    driver: local
+  mongo_replica_data:
+    driver: local
+  mongo_data:
+    driver: local
+
+services:
+  rocketchat:
+    container_name: rocketchat
+    image: rocket.chat:latest
+    restart: unless-stopped
+    environment:
+      - PORT=${ROCKET_CHAT_PORT}
+      - MONGO_URL=${ROCKET_CHAT_MONGO_URL}
+      - MONGO_OPLOG_URL=${ROCKET_CHAT_MONGO_OPLOG_URL}
+    depends_on:
+      - mongo
+    ports:
+      - ${ROCKET_CHAT_HOST_PORT}:${ROCKET_CHAT_CONTAINER_PORT}
+    volumes: 
+      - rocketchat_data:${ROCKETCHAT_VOLUMES}
+  mongo-init-replica:
+    image: mongo:latest
+    command: >
+      bash -c
+        "for i in `seq 1 30`; do
+            msg=$$(mongosh mongo/rocketchat --quiet --eval \"
+            rs.initiate({
+              _id: 'rs0',
+              members: [ { _id: 0, host: 'mongo:27017' } ]})\" 2>&1)
+            s=$$?
+            if [ \"$$s\" -eq 0 ]; then
+              break
+            fi
+            if [[ \"$$msg\" == \"MongoServerError: already initialized\" ]] ; then
+              echo $$msg
+              break
+            fi
+          echo \"Tried $$i times. Waiting 5 secs...\";
+          sleep 5;
+        done; (exit 1)"
+    depends_on:
+      - mongo
+    volumes: 
+      - mongo_replica_data:${MONGO_REPLICA_VOLUMES}
+  mongo:
+    image: mongo:latest
+    restart: unless-stopped
+    command: mongod --oplogSize 128 --replSet rs0
+    labels:
+      - "traefik.enable=false"
+    volumes:
+      - mongo_data:${MONGO_VOLUMES}
